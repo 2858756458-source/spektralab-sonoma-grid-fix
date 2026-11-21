@@ -1,0 +1,51 @@
+--- a/app/SpektraLab/Sources/Features/Develop/StockGridPanel.swift
++++ b/app/SpektraLab/Sources/Features/Develop/StockGridPanel.swift
+@@ -57,6 +57,14 @@
+     @State private var ask: StripScrollAsk?
+     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+ 
++    // Sonoma does not reliably report nested scroll offsets here. Keep all cards
++    // visible and requested on that OS; the catalogue is bounded. Newer systems
++    // retain the existing viewport-based scheduling and held brand header.
++    private var tracksVisibleRows: Bool {
++        if #available(iOS 18.0, *) { return true }
++        return false
++    }
++
+     /// A line of the grid: a maker's name, or a row of its cards (the row's place among the layout's rows).
+     private enum Line: Identifiable {
+         case brand(String)
+@@ -105,8 +113,8 @@
+                             // A card goes under the held name as one thing: a row whose pictures are wholly under
+                             // it is not drawn, so its names never show without them (`StockGridLayout.Shown.gone`).
+                             rowLine(layout.rows[at], cell: cell, live: live)
+-                                .opacity(at < now.gone ? 0 : 1)
+-                                .allowsHitTesting(at >= now.gone)
++                                .opacity(tracksVisibleRows && at < now.gone ? 0 : 1)
++                                .allowsHitTesting(!tracksVisibleRows || at >= now.gone)
+                         }
+                     }
+                 }
+@@ -158,7 +166,7 @@
+             // card under the name is not chosen through it, and a card's visible part under the name is the card's. A
+             // scroll over it is still the strip's (`MacNestedScrolls` decides by the strip's place, not the hit view).
+             .overlay(alignment: .top) {
+-                if let held = now.held, held < named.count {
++                if tracksVisibleRows, let held = now.held, held < named.count {
+                     StockBrandHeader(name: named[held].brand).padding(.horizontal, CGFloat(StockGridRule.margin))
+                         .background(Theme.background)
+                         .contentShape(Rectangle())
+@@ -175,7 +183,12 @@
+     /// What the strip shows where it now is: drawn (the held name, the rows gone under it), and its cards asked for.
+     private func show(_ next: StockGridLayout.Shown, layout: StockGridLayout) {
+         if shown != next { shown = next }
+-        let asked = Set(next.rows.flatMap { layout.rows[$0].cards }.filter { $0 < cards.count }.map { cards[$0].slot })
++        let asked: Set<String>
++        if tracksVisibleRows {
++            asked = Set(next.rows.flatMap { layout.rows[$0].cards }.filter { $0 < cards.count }.map { cards[$0].slot })
++        } else {
++            asked = Set(cards.map(\.slot))
++        }
+         let mine = Set(cards.map(\.slot))
+         let kept = visible.subtracting(mine).union(asked)
+         if kept != visible { visible = kept }
