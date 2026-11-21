@@ -1,0 +1,58 @@
+name: Build Sonoma grid candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fix
+      - uses: actions/checkout@v4
+        with:
+          repository: JamesQiu2005/SpektraLab
+          ref: b51e6723b5f7ed779d5984a3958d15f5eb35b5ee
+          path: upstream
+      - name: Apply candidate patch
+        working-directory: upstream
+        run: |
+          git apply --check ../fix/sonoma-grid.patch
+          git apply ../fix/sonoma-grid.patch
+          git diff --check
+          git diff --stat
+      - name: Verify toolchain
+        run: |
+          xcode_path=$(find /Applications -maxdepth 1 -name 'Xcode_27*.app' -print | grep -viE 'beta|candidate' | sort -V | tail -1)
+          test -n "$xcode_path"
+          sudo xcode-select -s "$xcode_path/Contents/Developer"
+          xcodebuild -version
+          xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
+          xcrun -sdk macosx --find metallib
+      - name: Stock catalogue and layout self-tests
+        working-directory: upstream/app/SpektraLab
+        run: python3 -B tools/gate.py selftest --only stock_previews_selftest,stock_personal_selftest
+      - name: Build engine
+        working-directory: upstream
+        run: app/SpektraLab/tools/build_engine_mac.sh
+      - name: Build both configurations
+        working-directory: upstream/app/SpektraLab
+        run: |
+          python3 gen_project.py --bundle-id local.tangkun.spektralab.gridfix
+          for config in Debug Release; do
+            xcodebuild -project SpektraLab.xcodeproj -scheme SpektraLab -configuration "$config" -destination 'platform=macOS,variant=Mac Catalyst' -jobs 4 -derivedDataPath "$RUNNER_TEMP/DerivedData" build
+          done
+      - name: Package candidate
+        run: |
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Release-maccatalyst/SpektraLab.app"
+          test -d "$app"
+          codesign --verify --deep --strict "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$RUNNER_TEMP/SpektraLab-Sonoma-grid-candidate.zip"
+          shasum -a 256 "$RUNNER_TEMP/SpektraLab-Sonoma-grid-candidate.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpektraLab-Sonoma-grid-candidate
+          path: ${{ runner.temp }}/SpektraLab-Sonoma-grid-candidate.zip
+          retention-days: 7
