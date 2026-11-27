@@ -49,3 +49,244 @@
          let mine = Set(cards.map(\.slot))
          let kept = visible.subtracting(mine).union(asked)
          if kept != visible { visible = kept }
+diff --git a/app/SpektraLab/Sources/Features/Develop/CopySettingsDialog.swift b/app/SpektraLab/Sources/Features/Develop/CopySettingsDialog.swift
+index f86dae9..8a15484 100644
+--- a/app/SpektraLab/Sources/Features/Develop/CopySettingsDialog.swift
++++ b/app/SpektraLab/Sources/Features/Develop/CopySettingsDialog.swift
+@@ -36,7 +36,19 @@ struct CopySettingsDialog: View {
+         router.dismissSheet()
+     }
+ 
+-    var body: some View {
++    @ViewBuilder var body: some View {
++        if SettingsSheetCompatibility.needsPlainLayout {
++            SettingsPlainPage(title: L("Copy Settings"), confirmTitle: L("Copy"),
++                              confirmEnabled: !picked.isEmpty, confirm: copy,
++                              cancel: { router.dismissSheet() }) {
++                SettingsGroupPicker(picked: $picked, edit: model.openSession(frameID)?.transferableSettings ?? library.frame(frameID)?.edit ?? .default)
++            }
++        } else {
++            modernBody
++        }
++    }
++
++    private var modernBody: some View {
+         NavigationStack {
+             List {
+                 SettingsGroupPicker(picked: $picked, edit: model.openSession(frameID)?.transferableSettings ?? library.frame(frameID)?.edit ?? .default)
+diff --git a/app/SpektraLab/Sources/Features/Develop/PresetSheet.swift b/app/SpektraLab/Sources/Features/Develop/PresetSheet.swift
+index e3c9052..ceb547e 100644
+--- a/app/SpektraLab/Sources/Features/Develop/PresetSheet.swift
++++ b/app/SpektraLab/Sources/Features/Develop/PresetSheet.swift
+@@ -9,7 +9,44 @@ struct PresetSheet: View {
+     @State private var rename = ""
+     @State private var missing: String?
+ 
+-    var body: some View {
++    @ViewBuilder var body: some View {
++        if SettingsSheetCompatibility.needsPlainLayout {
++            // Keep save on this sheet: nested Catalyst navigation/list sheets can
++            // spin in UIView trait/layout updates on macOS 14.
++            if saving {
++                PresetSaveSheet(session: session, close: { saving = false })
++            } else {
++                SettingsPlainPage(title: L("Presets"), confirmTitle: L("Done"),
++                                  confirm: { dismiss() }, cancel: { dismiss() }) {
++                    if let missing { Text(missing).foregroundStyle(.red) }
++                    if let error = model.presets.error { Text(error).foregroundStyle(.red) }
++                    if model.presets.presets.isEmpty { Text(L("No presets yet")).foregroundStyle(Theme.secondaryText) }
++                    ForEach(model.presets.presets) { preset in
++                        HStack {
++                            Button(preset.name) { apply(preset) }
++                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
++                            Menu {
++                                Button(L("Rename")) { renaming = preset; rename = preset.name }
++                                Button(L("Delete"), role: .destructive) { model.presets.delete(preset.id) }
++                            } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
++                                .accessibilityLabel(preset.name + ", " + L("Presets"))
++                        }
++                    }
++                    if model.presets.canRestore { Button(L("Undo Delete")) { model.presets.restoreDeleted() } }
++                    Button(L("Save Preset")) { saving = true }.disabled(!model.presets.canWrite)
++                }
++                .alert(L("Rename"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
++                    TextField(L("Name"), text: $rename)
++                    Button(L("Save")) { if let p = renaming { _ = model.presets.rename(p.id, to: rename) }; renaming = nil }
++                    Button(L("Cancel"), role: .cancel) { renaming = nil }
++                }
++            }
++        } else {
++            modernBody
++        }
++    }
++
++    private var modernBody: some View {
+         NavigationStack {
+             List {
+                 if let missing { Text(missing).foregroundStyle(.red) }
+@@ -62,12 +99,29 @@ struct PresetSheet: View {
+ 
+ struct PresetSaveSheet: View {
+     let session: OpenFrameSession
++    var close: (() -> Void)? = nil
+     @Environment(AppServices.self) private var model
+     @Environment(\.dismiss) private var dismiss
+     @State private var name = ""
+     @State private var picked = ClipboardGroup.defaultSelection
+ 
+-    var body: some View {
++    private func finish() { if let close { close() } else { dismiss() } }
++
++    @ViewBuilder var body: some View {
++        if SettingsSheetCompatibility.needsPlainLayout {
++            SettingsPlainPage(title: L("Save Preset"), confirmTitle: L("Save"),
++                              confirmEnabled: canSave, confirm: save, cancel: finish) {
++                TextField(L("Name"), text: $name).textFieldStyle(.roundedBorder)
++                    .onSubmit { save() }
++                SettingsGroupPicker(picked: $picked, edit: session.transferableSettings)
++                if let error = model.presets.error { Text(error).foregroundStyle(.red) }
++            }
++        } else {
++            modernBody
++        }
++    }
++
++    private var modernBody: some View {
+         NavigationStack {
+             Form {
+                 TextField(L("Name"), text: $name).submitLabel(.done)
+@@ -89,7 +143,7 @@ struct PresetSaveSheet: View {
+     private func save() {
+         guard canSave else { return }
+         if model.presets.save(name: name, clip: session.clip(groups: picked, sourceName: "")) {
+-            dismiss()
++            finish()
+         }
+     }
+ 
+@@ -110,7 +164,12 @@ struct SettingsGroupPicker: View {
+         row(.filmAndPaper)
+         decode
+         ForEach(afterDecode.filter { ClipboardGroup.offered.contains($0) }) { row($0) }
+-        DisclosureGroup(L("Darkroom")) { ForEach(darkroom) { row($0) } }
++        if SettingsSheetCompatibility.needsPlainLayout {
++            Text(L("Darkroom")).font(.headline).padding(.top, 8)
++            ForEach(darkroom) { row($0) }
++        } else {
++            DisclosureGroup(L("Darkroom")) { ForEach(darkroom) { row($0) } }
++        }
+         ForEach([ClipboardGroup.light, .curve, .colour, .lens].filter { $0.layer2Tool != nil || ClipboardGroup.offered.contains($0) }) { row($0) }
+         // PRD-E §9 q10: a copy and a preset carry no mask layer in M1 (`SettingsClip`).
+         if FeatureFlags.maskLayers {
+@@ -122,11 +181,21 @@ struct SettingsGroupPicker: View {
+ 
+     /// Decode's box over its parts, and the parts under it, inset as Edit's rows under a tool's name are.
+     @ViewBuilder private var decode: some View {
+-        Toggle(sources: ClipboardGroup.decodeParts.map(ticked), isOn: \.self) {
+-            Text(ClipboardGroup.decode.title)
++        if SettingsSheetCompatibility.needsPlainLayout {
++            let parts = Set(ClipboardGroup.decodeParts)
++            let all = parts.isSubset(of: picked)
++            let some = !parts.isDisjoint(with: picked)
++            SettingsPlainCheck(title: ClipboardGroup.decode.title, summary: "",
++                               on: all, mixed: some && !all) {
++                if all { picked.subtract(parts) } else { picked.formUnion(parts) }
++            }.accessibilityIdentifier("copy.group.decode")
++        } else {
++            Toggle(sources: ClipboardGroup.decodeParts.map(ticked), isOn: \.self) {
++                Text(ClipboardGroup.decode.title)
++            }
++            .tint(Theme.accent).frame(minHeight: 44)
++            .accessibilityIdentifier("copy.group.decode")
+         }
+-        .tint(Theme.accent).frame(minHeight: 44)
+-        .accessibilityIdentifier("copy.group.decode")
+         ForEach(ClipboardGroup.decodeParts) { part in
+             row(part, title: part.partTitle).padding(.leading, 20)
+         }
+@@ -138,12 +207,84 @@ struct SettingsGroupPicker: View {
+         })
+     }
+ 
+-    private func row(_ group: ClipboardGroup, title: String? = nil) -> some View {
++    @ViewBuilder private func row(_ group: ClipboardGroup, title: String? = nil) -> some View {
++        if SettingsSheetCompatibility.needsPlainLayout {
++            SettingsPlainCheck(title: title ?? group.title, summary: group.summary(of: edit),
++                               on: picked.contains(group)) {
++                if picked.contains(group) { picked.remove(group) } else { picked.insert(group) }
++            }
++        } else {
+         Toggle(isOn: ticked(group)) {
+             VStack(alignment: .leading, spacing: 3) {
+                 Text(title ?? group.title)
+                 Text(group.summary(of: edit)).font(.caption).foregroundStyle(Theme.secondaryText).lineLimit(2)
+             }
+         }.tint(Theme.accent).frame(minHeight: 44)
++        }
++    }
++}
++
++// The original sheet hangs in SwiftUI/UICollectionView layout on macOS 14.
++// Use finite, non-lazy rows and explicit actions there, leaving macOS 15+ intact.
++enum SettingsSheetCompatibility {
++    static var needsPlainLayout: Bool {
++        #if targetEnvironment(macCatalyst)
++        if #available(macCatalyst 18.0, *) { return false }
++        return true
++        #else
++        return false
++        #endif
++    }
++}
++
++struct SettingsPlainPage<Content: View>: View {
++    let title: String
++    let confirmTitle: String
++    var confirmEnabled = true
++    let confirm: () -> Void
++    let cancel: () -> Void
++    @ViewBuilder var content: () -> Content
++
++    var body: some View {
++        VStack(spacing: 0) {
++            HStack {
++                Button(L("Cancel"), action: cancel)
++                Spacer()
++                Text(title).font(.headline)
++                Spacer()
++                Button(confirmTitle, action: confirm).disabled(!confirmEnabled)
++            }.padding(20)
++            Divider()
++            ScrollView {
++                VStack(alignment: .leading, spacing: 12, content: content)
++                    .frame(maxWidth: .infinity, alignment: .leading).padding(20)
++            }
++        }
++        .foregroundStyle(Theme.text).background(Theme.sheet)
++        .macPageActions(confirmTitle: confirmTitle, confirmEnabled: confirmEnabled,
++                        confirm: confirm, cancel: cancel)
++    }
++}
++
++private struct SettingsPlainCheck: View {
++    let title: String
++    let summary: String
++    let on: Bool
++    var mixed = false
++    let action: () -> Void
++    var body: some View {
++        Button(action: action) {
++            HStack(alignment: .center, spacing: 12) {
++                Image(systemName: mixed ? "minus.square.fill" : (on ? "checkmark.square.fill" : "square"))
++                    .foregroundStyle(on || mixed ? Theme.accent : Theme.secondaryText)
++                VStack(alignment: .leading, spacing: 3) {
++                    Text(title)
++                    if !summary.isEmpty { Text(summary).font(.caption).foregroundStyle(Theme.secondaryText).lineLimit(2) }
++                }
++                Spacer(minLength: 0)
++            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
++        }.buttonStyle(.plain)
++            .accessibilityLabel(title).accessibilityValue(mixed ? "−" : (on ? "✓" : ""))
++            .accessibilityAddTraits(on ? [.isSelected] : [])
+     }
+ }
