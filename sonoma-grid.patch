@@ -49,6 +49,30 @@
          let mine = Set(cards.map(\.slot))
          let kept = visible.subtracting(mine).union(asked)
          if kept != visible { visible = kept }
+diff --git a/app/SpektraLab/Sources/App/AppRouter.swift b/app/SpektraLab/Sources/App/AppRouter.swift
+index 07762a5..18c81cb 100644
+--- a/app/SpektraLab/Sources/App/AppRouter.swift
++++ b/app/SpektraLab/Sources/App/AppRouter.swift
+@@ -278,6 +278,19 @@ private struct SheetLevel: View {
+     var body: some View {
+         let current = router.sheets.count > level ? router.sheets[level] : opened
+         let height = Binding<PresentationDetent>(get: { current.detent }, set: { _ in })
++        if SettingsSheetCompatibility.needsPlainLayout, case .copySettings = current {
++            // The first Sonoma fix changed only the rows; a live repeat still
++            // spun inside SwiftUI layout. Do not combine a desktop settings
++            // page with the phone detent/background sizing wrapper on Sonoma.
++            SheetContent(route: current)
++                .frame(width: 620, height: 680)
++                .appColorScheme()
++        } else {
++            standardSheet(current, height: height)
++        }
++    }
++
++    private func standardSheet(_ current: SheetRoute, height: Binding<PresentationDetent>) -> some View {
+         SheetContent(route: current)
+             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+             .presentationDetents(current.slotDetents, selection: height)
 diff --git a/app/SpektraLab/Sources/Features/Develop/CopySettingsDialog.swift b/app/SpektraLab/Sources/Features/Develop/CopySettingsDialog.swift
 index f86dae9..8a15484 100644
 --- a/app/SpektraLab/Sources/Features/Develop/CopySettingsDialog.swift
@@ -75,7 +99,7 @@ index f86dae9..8a15484 100644
              List {
                  SettingsGroupPicker(picked: $picked, edit: model.openSession(frameID)?.transferableSettings ?? library.frame(frameID)?.edit ?? .default)
 diff --git a/app/SpektraLab/Sources/Features/Develop/PresetSheet.swift b/app/SpektraLab/Sources/Features/Develop/PresetSheet.swift
-index e3c9052..ceb547e 100644
+index e3c9052..911e4ab 100644
 --- a/app/SpektraLab/Sources/Features/Develop/PresetSheet.swift
 +++ b/app/SpektraLab/Sources/Features/Develop/PresetSheet.swift
 @@ -9,7 +9,44 @@ struct PresetSheet: View {
@@ -204,7 +228,7 @@ index e3c9052..ceb547e 100644
          ForEach(ClipboardGroup.decodeParts) { part in
              row(part, title: part.partTitle).padding(.leading, 20)
          }
-@@ -138,12 +207,84 @@ struct SettingsGroupPicker: View {
+@@ -138,12 +207,87 @@ struct SettingsGroupPicker: View {
          })
      }
  
@@ -262,6 +286,9 @@ index e3c9052..ceb547e 100644
 +                    .frame(maxWidth: .infinity, alignment: .leading).padding(20)
 +            }
 +        }
++        // Give Catalyst a stable preferred size; the scroll content must not
++        // determine the presentation size while the sheet is being laid out.
++        .frame(width: 620, height: 680)
 +        .foregroundStyle(Theme.text).background(Theme.sheet)
 +        .macPageActions(confirmTitle: confirmTitle, confirmEnabled: confirmEnabled,
 +                        confirm: confirm, cancel: cancel)
